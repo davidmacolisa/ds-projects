@@ -1,0 +1,739 @@
+#======================================================================================================================#
+# Customer Churn: Clustering
+# Using Multiple Correspondence Analysis (MCA) and variable clustering in R for insights in customer attrition.
+# MCA is used for qualitative data
+# August 24, 2024
+# https://www.r-bloggers.com/customer-clustering-in-r/
+# Author: Davidmac Olisa Ekeocha
+#======================================================================================================================#
+# set working directory
+setwd(dir = "C:/Users/david/OneDrive/Documents/ULMS/PhD/Jobs/src/career_track/ds_projects/customer_clustering/")
+#======================================================================================================================#
+# load libraries
+#======================================================================================================================#
+library(tidyverse)
+library(ggplot2)
+#======================================================================================================================#
+# One of the key challenges in multivariate data analysis and predictive modeling is effectively managing redundant
+# and irrelevant variables. To tackle redundancy, a strategic approach involves identifying groups of variables that
+# exhibit strong correlations within themselves while remaining as uncorrelated as possible with other groups in the
+# dataset. Addressing relevancy, on the other hand, focuses on evaluating potential predictor variables by
+# understanding the relationship between the target variable and the input variables.
+#
+# Multiple Correspondence Analysis (MCA) is a powerful multivariate data analysis tool used to uncover and visually
+# represent associations among groups of categorical variables in a low-dimensional space. It is particularly effective
+# in exploring complex relationships and patterns within categorical data. Variable clustering, often employed as a
+# preliminary step, helps identify redundancy and offers an initial understanding of the data's multivariate structure.
+#
+# I aim to demonstrate the practical applications of MCA in three key areas: 1) preparing input variables for
+# analysis and predictive modeling, 2) utilizing MCA as an exploratory tool for gaining business insights, such as
+# understanding customer churn, and 3) applying variable clustering to identify and manage redundant categorical
+# variables.
+#
+# In this analysis, we focus on customer churn data—a critical metric that businesses use to track and quantify the
+# loss of customers or clients for various reasons. The dataset includes detailed customer-level information, such as
+# demographics, account details, service usage, monthly charges, and the duration of their relationship with the
+# company. The last column, labeled "churn," indicates whether a customer has left the company for a competitor (Yes)
+# or remained with the company (No).
+#======================================================================================================================#
+# load and pre-process the data
+#======================================================================================================================#
+churn <- readr::read_csv(file = "customer_churn.csv")
+str(churn)
+colnames(churn) <- tolower(colnames(churn))
+glimpse(churn)
+
+## check for factor levels in each column
+factor_cols <- churn %>%
+  select_if(is.character) %>%
+  names() %>%
+  .[. != "customerid"]
+apply(churn %>% select(all_of(factor_cols)), MARGIN = 2, function(x) nlevels(as.factor(x)))
+#======================================================================================================================#
+# The dataset contains a total of 7043 customers and 21 customer attributes. The data structure shows that some
+# variables need to be recoded and converted to factors. For instance, multiplelines, onlinesecurity, onlinebackup,
+# deviceprotection, techsupport, streamingmovies, and streamingtv. Also, I will recode seniorcitizen to be a "Yes" or
+# "No" for consistency. I use the below code to achieve the recoding.
+#======================================================================================================================#
+churn <- churn %>%
+  mutate(
+	multiplelines = case_when(multiplelines == "Yes" ~ "Yes",
+							  multiplelines == "No" | multiplelines == "No phone service" ~ "No"),
+	onlinesecurity = case_when(onlinesecurity == "Yes" ~ "Yes",
+							   onlinesecurity == "No" | onlinesecurity == "No phone service" ~ "No"),
+	onlinebackup = case_when(onlinebackup == "Yes" ~ "Yes",
+							 onlinebackup == "No" | onlinebackup == "No phone service" ~ "No"),
+	deviceprotection = case_when(deviceprotection == "Yes" ~ "Yes",
+								 deviceprotection == "No" | deviceprotection == "No phone service" ~ "No"),
+	techsupport = case_when(techsupport == "Yes" ~ "Yes",
+							techsupport == "No" | techsupport == "No phone service" ~ "No"),
+	streamingtv = case_when(streamingtv == "Yes" ~ "Yes",
+							streamingtv == "No" | streamingtv == "No phone service" ~ "No"),
+	streamingmovies = case_when(streamingmovies == "Yes" ~ "Yes",
+								streamingmovies == "No" | streamingmovies == "No phone service" ~ "No"),
+	contract = case_when(contract == "Month-to-month" ~ "Month_to_Month",
+						 contract == "One year" ~ "One_Year",
+						 contract == "Two year" ~ "Two_Years"),
+	paymentmethod = case_when(paymentmethod == "Electronic check" ~ "Electronic_Check",
+							  paymentmethod == "Mailed check" ~ "Mailed_Check",
+							  paymentmethod == "Bank transfer (automatic)" ~ "Bank_Transfer",
+							  paymentmethod == "Credit card (automatic)" ~ "Credit_Card"),
+	internetservice = case_when(internetservice == "DSL" ~ "DSL",
+								internetservice == "Fiber optic" ~ "Fiber_Optic",
+								internetservice == "No" ~ "No"),
+	seniorcitizen = ifelse(test = seniorcitizen == 1, yes = "Yes", no = "No"),
+  )
+
+
+factor_cols <- churn %>%
+  select_if(is.character) %>%
+  names() %>%
+  .[. != "customerid"]
+apply(churn %>% select(all_of(factor_cols)), MARGIN = 2, function(x) nlevels(as.factor(x)))
+glimpse(churn)
+#======================================================================================================================#
+# Summary statistics to get the data distribution
+#======================================================================================================================#
+ggplot(data = churn, aes(x = monthlycharges)) + geom_boxplot()
+ggplot(data = churn, aes(x = monthlycharges)) + geom_histogram()
+
+ggplot(data = churn, aes(x = tenure)) + geom_boxplot()
+ggplot(data = churn, aes(x = tenure)) + geom_histogram()
+
+summary(churn$monthlycharges)
+summary(churn$tenure)
+#======================================================================================================================#
+# Based on the above summary statistics, I recode the the tenure and monthlycharges into three categories.
+#======================================================================================================================#
+churn <- churn %>%
+  mutate(
+	tenure_cat = as.factor(
+	  case_when(tenure <= 9 ~ "Short_Tenure",
+				tenure > 9 & tenure <= 29 ~ "Medium_Tenure",
+				tenure > 29 ~ "Long_Tenure")
+	),
+	monthlycharges_cat = as.factor(
+	  case_when(monthlycharges <= 35.5 ~ "Low_Charges",
+				monthlycharges > 35.5 & monthlycharges <= 70.35 ~ "Medium_Charges",
+				monthlycharges > 70.35 ~ "High_Charges")
+	),
+
+  )
+#======================================================================================================================#
+# Check and convert character string columns to factors. Drop totalcharges column
+#======================================================================================================================#
+string_cols <- churn %>% select_if(is.character) %>% names()
+churn[, string_cols] <- lapply(churn[, string_cols], as.factor)
+
+drop_cols <- c("customerid", "totalcharges", "monthlycharges", "tenure")
+churn <- churn %>%
+  select(-all_of(drop_cols)) %>%
+  select(churn, everything())
+#======================================================================================================================#
+# Checking and Handling missing values
+# The code shows that 7% of the rows have missing values, a total of 9156 NAs.
+# After removing the missing values, we have a total of 5517 rows.
+#======================================================================================================================#
+apply(churn, MARGIN = 2, function(x) sum(is.na(x)))
+mean(is.na(churn))
+sum(is.na(churn))
+
+# remove all NA rows
+churn <- na.omit(churn) # zero missing values
+#======================================================================================================================#
+# Select and drop customerID, monthlycharges, and tenure columns
+#======================================================================================================================#
+# churn_df <- churn %>% select(c(monthlycharges, tenure))
+# drop_cols <- c("customerid", "monthlycharges", "tenure")
+# churn <- churn %>%
+#   select(-all_of(drop_cols)) %>%
+#   select(churn, everything())
+#======================================================================================================================#
+# Now the data is ready for analysis
+# Exploring churn
+#======================================================================================================================#
+ggplot(data = churn, aes(x = churn)) +
+  geom_bar(fill = "darkblue") +
+  labs(title = "Customer Attrition",
+	   x = "Churn",
+	   y = "Count")
+#======================================================================================================================#
+# Partitioning the data into 80% training and 20% test sets based on churn. Set seed to make results reproducible.
+# The training data contains 4414 observations and 19 columns and the testing data contains 1103 observations and 19
+# columns.
+#======================================================================================================================#
+# load the required library
+library(caret)
+
+set.seed(seed = 123)
+in_train <- caret::createDataPartition(churn$churn, p = 0.8, list = FALSE)
+training <- churn %>% slice(in_train)
+testing <- churn %>% slice(-in_train)
+
+dim(training)
+dim(testing)
+#======================================================================================================================#
+# Multiple Correspondence Analysis (MCA)
+#======================================================================================================================#
+# Invoke the FactoMiner & factoextra packages.
+#======================================================================================================================#
+library(FactoMineR)
+library(factoextra)
+
+# Apply MCA
+res_mca <- MCA(X = training, quali.sup = c(15, 17, 19), graph = F)
+fviz_mca_var(res_mca, repel = T)
+#----------------------------------------------------------------------------------------------------------------------#
+# To derive business insights from the figure above, a useful approach is to observe and note the proximity of input
+# variables to the target variable, as well as their closeness to one another. For example, the figure above shows that
+# customers who are senior citizens, those that uses Fiber optic internet services, and those on high-
+# charges, paperless billing, with multiple lines and phone services, but no dependents or partner, no online security
+# or backup, no device protection or tech-support, are more associated with customers on a medium tenure and
+# month-to-month contract, have higher likelihood to churn.
+
+# In contrast, non-senior citizen customers on long-term contract and between one to two years tenure, with partners,
+# online backup and device protection are less likely to churn.
+#======================================================================================================================#
+# Variable Clustering
+# Load the ClustOfVar package and the hclustvar function produces a tree of variable groups.
+#======================================================================================================================#
+library(ClustOfVar)
+
+# run variable clustering excluding the target variable (churn)
+variable_tree <- hclustvar(X.quali = as.matrix(training[, 2:18]))
+# plot the dendrogram of variable groups
+plot(variable_tree)
+#----------------------------------------------------------------------------------------------------------------------#
+# There appear to be 6 distinct variable groups in the dendrogram. This is based on the number of distinct clusters
+# formed at the highest level of the tree. Since the distinct clusters are not explosive, there is no need to cut them.
+# However, I show that the 6 clusters are indeed the desired number of cluster after B = 100 bootstrap samples. I use
+# the
+# stability function from the ClustOfVar package to assess the stability of the variable cluster partitions.
+#======================================================================================================================#
+stability(tree = variable_tree, B = 100, graph = T)
+#----------------------------------------------------------------------------------------------------------------------#
+# The plot shows that the 4 optimal clusters are the desired number of clusters
+#======================================================================================================================#
+cut_cluster <- cutreevar(obj = variable_tree, k = 4)
+print(cut_cluster$var)
+#----------------------------------------------------------------------------------------------------------------------#
+# The 6-clusters and the variable names in each cluster are listed below. The practical guide to minimizing redundancy
+# is to select a cluster representative. However, subject-matter considerations should have a say in the consideration
+# and selection of other candidate representatives of each variable cluster group.
+#======================================================================================================================#
+# Descriptive statistics of customer churn
+# Determine the overall churn rate in the dataset. The overall churn rate is 32%.
+#======================================================================================================================#
+round(prop.table(table(churn$churn)) * 100, digits = 2)
+#======================================================================================================================#
+# Customer attrition rate by demography
+#======================================================================================================================#
+demog_cols <- 2:19
+demog_counts <- training %>%
+  select(all_of(demog_cols), churn) %>%
+  pivot_longer(cols = -churn, names_to = "class", values_to = "value") %>%
+  group_by(class, value, churn) %>%
+  tally(name = "counts") %>%
+  pivot_wider(names_from = churn, values_from = counts, values_fill = 0) %>%
+  mutate(churn_rate = round((Yes / (No + Yes) * 100) - 31.83, digits = 1)) %>%
+  transmute(category = paste(class, value, sep = " -- "), churn_rate)
+
+ggplot(demog_counts, aes(category, churn_rate, color = churn_rate < 0)) +
+  geom_segment(aes(x = reorder(category, -churn_rate), xend = category,
+				   y = 0, yend = churn_rate),
+			   linewidth = 1.5, alpha = 2) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("TRUE" = "blue", "FALSE" = "brown")) +
+  theme(legend.position = "none") +
+  labs(x = "Variable",
+	   y = "Customer Attrition (%)",
+	   title = "Customer Attrition rate \n Difference from the overall average (%)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+#----------------------------------------------------------------------------------------------------------------------#
+# The figure above shows that customer attrition rate is highest amongst customers who are senior citizens,without a
+# partner, no device protection, no online backup, no tech-support, no online security, uses fibre-optic internet
+# services, with monthly contract, electronic check payment method and on short tenure. Conversely, customers with
+# one- to two-year contracts, online security, tech-support, long-tenure, pays with credit cards and bank transfers,
+# non-senior citizens have dependents and partner, online backup and device protection have less attrition rates.
+#======================================================================================================================#
+# Converting factors to numeric.
+# Correlation matrix
+#======================================================================================================================#
+# Converting factors to numeric
+dummies <- dummyVars(~., data = churn, fullRank = F, sep = "_")
+churn_df <- predict(dummies, newdata = churn) %>%
+  data.frame() %>%
+  select(-contains(match = "No"))
+head(churn_df)
+
+# Correlation matrix
+corrplot::corrplot(
+  corr = cor(churn_df, method = "spearman"),
+  method = "circle",
+  type = "lower",
+  tl.col = "black",
+  tl.srt = 45,
+  addCoef.col = TRUE
+)
+#======================================================================================================================#
+# Near zero variance features
+#======================================================================================================================#
+nzv <- nearZeroVar(x = churn_df, saveMetrics = TRUE)
+filtered_nnzv <- nzv %>% filter(nzv == FALSE) # non-near zero variance
+filtered_nnzv
+
+filtered_nzv <- nzv %>% filter(nzv == TRUE) # near zero variance
+filtered_nzv
+remove_features <- rownames(filtered_nzv)
+
+# Remove near zero variance features
+churn_df <- churn_df %>% select(-all_of(remove_features))
+#======================================================================================================================#
+# Find and remove Linear Dependences
+#======================================================================================================================#
+linear_combs <- findLinearCombos(x = churn_df)
+linear_combs
+churn_df <- churn_df %>% select(-all_of(linear_combs$remove))
+#======================================================================================================================#
+# Split data into training and testing
+#======================================================================================================================#
+set.seed(seed = 123)
+in_train <- createDataPartition(churn_df$churn_Yes, p = 0.8, list = FALSE)
+training <- churn_df %>% slice(in_train)
+testing <- churn_df %>% slice(-in_train)
+#======================================================================================================================#
+# Prediting Attrition rates
+# Logistic Regression
+#======================================================================================================================#
+model <- glm(
+  formula = churn_Yes ~ .,
+  data = training,
+  family = "binomial"
+)
+summary(model)
+#----------------------------------------------------------------------------------------------------------------------#
+# Make Predictions on the Testing Data
+#----------------------------------------------------------------------------------------------------------------------#
+model_pred <- predict(model, newdata = testing)
+range(model_pred)
+
+model_df <- data.frame(
+  actual = testing$churn_Yes,
+  predicted = model_pred
+) %>%
+  mutate(
+	actual = as.factor(ifelse(actual == 1, yes = "Yes", no = "No")),
+	predicted_over_0.5 = as.factor(ifelse(predicted >= 0.5, yes = "Yes", no = "No"))
+  )
+#----------------------------------------------------------------------------------------------------------------------#
+# Confusion Matrix. And Accuracy
+#----------------------------------------------------------------------------------------------------------------------#
+conf_matrix <- model_df %>%
+  yardstick::conf_mat(actual, predicted_over_0.5)
+conf_matrix
+
+conf_matrix <- model_df %>%
+  dplyr::count(actual, predicted_over_0.5) %>%
+  pivot_wider(names_from = predicted_over_0.5, values_from = n, values_fill = list(n = 0))
+conf_matrix
+
+# Calculate accuracy
+# True positives and true negatives are in the diagonal
+true_positives <- conf_matrix %>%
+  filter(actual == "Yes") %>%
+  pull(Yes)
+
+true_negatives <- conf_matrix %>%
+  filter(actual == "No") %>%
+  pull(No)
+
+total <- sum(conf_matrix$Yes) + sum(conf_matrix$No)
+accuracy <- (true_positives + true_negatives) / total
+print(paste("Accuracy:", round(accuracy * 100, digits = 0), "%"))
+#----------------------------------------------------------------------------------------------------------------------#
+# Plot the ROC Curve and Calculate the AUC
+#----------------------------------------------------------------------------------------------------------------------#
+library(pROC)
+library(ggplot2)
+
+# Calculate the ROC curve
+roc_obj <- roc(testing$churn, model_pred)
+
+# Plot the ROC curve
+ggroc(roc_obj, colour = "brown", linetype = 1, size = 2) +
+  ggtitle(label = "ROC Curve") +
+  labs(x = "Specificity", y = "Sensitivity") +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+  theme_bw()
+
+# Calculate the AUC
+auc_value <- round(auc(roc_obj), digits = 2)
+print(auc_value)
+#======================================================================================================================#
+# Ensemble Model method
+#======================================================================================================================#
+# Model ensemble using caret
+#======================================================================================================================#
+# Prepare the data
+churn_df <- churn_df %>%
+  mutate(
+	churn_Yes = as.factor(ifelse(churn_Yes == 1, yes = "Yes", no = "No")),
+  )
+
+# Get the predictors
+labelName <- churn_df %>%
+  select(churn_Yes) %>%
+  names()
+predictors <- churn_df %>%
+  select(-c(all_of(labelName), churn_Yes)) %>%
+  names()
+#======================================================================================================================#
+# Splitting the data into ensembleData, blenderData and testData
+#======================================================================================================================#
+# Split the data into one-thirds
+seed <- 123
+set.seed(seed = seed)
+churn_df <- churn_df %>% slice_sample(prop = nrow(.))
+split <- floor(x = nrow(churn_df) / 3)
+ensembleData <- churn_df %>% slice(1:split)
+blenderData <- churn_df %>% slice((split + 1):(split * 2))
+testData <- churn_df %>% slice((split * 2 + 1):n())
+#======================================================================================================================#
+# Tuning the models
+#======================================================================================================================#
+# Load the necessary model library
+names(getModelInfo())
+library(gbm) # for gradient boosting
+library(naivebayes)
+library(caTools) # for boosted logit
+
+# Define training control
+my_ctrl <- trainControl(
+  method = "repeatedcv",
+  number = 10, # 10-folds cross-validation
+  repeats = 10, # repeat 10 times using bootstrapping
+  returnResamp = "none",
+  classProbs = TRUE, # to get class probabilities
+  summaryFunction = twoClassSummary # to estimate performance
+)
+
+# Tune GBM model
+gbmTuned <- expand.grid(
+  .n.trees = seq(from = 100, to = 1000, by = 100), # number of trees
+  .interaction.depth = seq(from = 1, to = 7, by = 2), # depth of each tree
+  .shrinkage = c(0.01, 0.1), # slow and fast learner
+  .n.minobsinnode = 20 # minimum number of observations in each node of the tree.
+)
+
+# Training the models
+# GBM --- Stochastic Gradient Boosting
+start_time <- Sys.time()
+model_gbm <- train(
+  x = ensembleData %>% select(all_of(predictors)),
+  y = ensembleData %>% pull(labelName),
+  method = "gbm",
+  preProcess = c("center", "scale"),
+  metric = "ROC",
+  tuneGrid = gbmTuned,
+  trControl = my_ctrl,
+  verbose = FALSE
+)
+end_time <- Sys.time()
+end_time - start_time
+model_gbm
+ggplot(model_gbm) + theme(legend.position = "top")
+
+# Predict the testData
+testData <- testData %>%
+  mutate(
+	actual = churn_Yes,
+	gbm_Pred = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors))),
+	gbm_Pred_No = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 1],
+	gbm_Pred_Yes = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 2],
+  )
+
+# Confusion Matrix
+confusionMatrix(testData$actual, testData$gbm_Pred, positive = "Yes")
+
+# AUC Curve
+gbm_auc <- roc(response = testData$actual,
+			   predictor = as.numeric(testData$gbm_Pred),
+			   levels = rev(levels(testData$actual)))
+gbm_auc
+
+# Plot the GBM ROC curve
+gbm_auc_curve <- ggroc(gbm_auc, colour = "blue", linetype = 1, size = 2) +
+  ggtitle(label = "GBM ROC Curve") +
+  labs(x = "Specificity", y = "Sensitivity") +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+  theme_bw()
+
+# Treebag
+model_treebag <- train(
+  x = ensembleData %>% select(all_of(predictors)),
+  y = ensembleData %>% pull(labelName),
+  method = "treebag",
+  preProcess = c("center", "scale"),
+  metric = "ROC",
+  # tuneGrid = tunedGrid,
+  trControl = my_ctrl,
+  verbose = FALSE
+)
+model_treebag
+
+# Predict the testData
+testData <- testData %>%
+  mutate(
+	actual = churn_Yes,
+	gbm_Pred = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors))),
+	gbm_Pred_No = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 1],
+	gbm_Pred_Yes = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 2],
+	treebag_Pred = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors))),
+	treebag_Pred_No = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors)),
+							  type = "prob")[, 1],
+	treebag_Pred_Yes = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors)),
+							   type = "prob")[, 2],
+  )
+
+# Confusion Matrix
+confusionMatrix(testData$actual, testData$treebag_Pred, positive = "Yes")
+
+# AUC Curve
+treebag_auc <- roc(response = testData$actual,
+				   predictor = as.numeric(testData$treebag_Pred),
+				   levels = rev(levels(testData$actual)))
+treebag_auc
+
+# Plot the Treebag ROC curve
+treebag_auc_curve <- ggroc(treebag_auc, colour = "blue", linetype = 1, size = 2) +
+  ggtitle(label = "Treebag model ROC Curve") +
+  labs(x = "Specificity", y = "Sensitivity") +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+  theme_bw()
+
+# Ada boost
+model_ada <- train(
+  x = ensembleData %>% dplyr::select(all_of(predictors)),
+  y = ensembleData %>% pull(labelName),
+  method = "ada", # random forest
+  preProcess = c("center", "scale"),
+  metric = "ROC",
+  # tuneGrid = tunedGrid,
+  trControl = my_ctrl,
+  verbose = FALSE
+)
+model_ada
+# ggplot(model_ada) + theme(legend.position = "top")
+
+# Predict the testData
+testData <- testData %>%
+  mutate(
+	actual = churn_Yes,
+	gbm_Pred = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors))),
+	gbm_Pred_No = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 1],
+	gbm_Pred_Yes = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 2],
+	treebag_Pred = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors))),
+	treebag_Pred_No = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors)),
+							  type = "prob")[, 1],
+	treebag_Pred_Yes = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors)),
+							   type = "prob")[, 2],
+	ada_Pred = predict(object = model_ada, newdata = testData %>% select(all_of(predictors))),
+	ada_Pred_No = predict(object = model_ada, newdata = testData %>% select(all_of(predictors)),
+						  type = "prob")[, 1],
+	ada_Pred_Yes = predict(object = model_ada, newdata = testData %>% select(all_of(predictors)),
+						   type = "prob")[, 2],
+  )
+
+# Confusion Matrix
+confusionMatrix(testData$actual, testData$ada_Pred, positive = "Yes")
+
+# AUC Curve
+ada_auc <- roc(response = testData$actual,
+			   predictor = as.numeric(testData$ada_Pred),
+			   levels = rev(levels(testData$actual)))
+ada_auc
+
+# Plot the Treebag ROC curve
+ada_auc_curve <- ggroc(ada_auc, colour = "blue", linetype = 1, size = 2) +
+  ggtitle(label = "Ada Boost model ROC Curve") +
+  labs(x = "Specificity", y = "Sensitivity") +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+  theme_bw()
+
+# xgboost
+model_xgboost <- train(
+  x = ensembleData %>% select(all_of(predictors)),
+  y = ensembleData %>% pull(labelName),
+  method = "xgbTree", # advanced boosted trees
+  preProcess = c("center", "scale"),
+  metric = "ROC",
+  # tuneGrid = tunedGrid,
+  trControl = my_ctrl,
+  verbose = FALSE
+)
+model_xgboost
+plot(model_xgboost)
+
+# Predict the testData
+testData <- testData %>%
+  mutate(
+	actual = churn_Yes,
+	gbm_Pred = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors))),
+	gbm_Pred_No = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 1],
+	gbm_Pred_Yes = predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)), type = "prob")[, 2],
+	treebag_Pred = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors))),
+	treebag_Pred_No = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors)),
+							  type = "prob")[, 1],
+	treebag_Pred_Yes = predict(object = model_treebag, newdata = testData %>% select(all_of(predictors)),
+							   type = "prob")[, 2],
+	ada_Pred = predict(object = model_ada, newdata = testData %>% select(all_of(predictors))),
+	ada_Pred_No = predict(object = model_ada, newdata = testData %>% select(all_of(predictors)),
+						  type = "prob")[, 1],
+	ada_Pred_Yes = predict(object = model_ada, newdata = testData %>% select(all_of(predictors)),
+						   type = "prob")[, 2],
+	xgboost_Pred = predict(object = model_xgboost, newdata = testData %>% select(all_of(predictors))),
+	xgboost_Pred_No = predict(object = model_xgboost, newdata = testData %>% select(all_of(predictors)),
+							  type = "prob")[, 1],
+	xgboost_Pred_Yes = predict(object = model_xgboost, newdata = testData %>% select(all_of(predictors)),
+							   type = "prob")[, 2],
+  )
+
+# Confusion Matrix
+confusionMatrix(testData$actual, testData$xgboost_Pred, positive = "Yes")
+
+# AUC Curve
+xgboost_auc <- roc(response = testData$actual,
+				   predictor = as.numeric(testData$xgboost_Pred),
+				   levels = rev(levels(testData$actual)))
+xgboost_auc
+
+# Plot the Treebag ROC curve
+xgboost_auc_curve <- ggroc(xgboost_auc, colour = "blue", linetype = 1, size = 2) +
+  ggtitle(label = "Advanced Boosted Trees model ROC Curve") +
+  labs(x = "Specificity", y = "Sensitivity") +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+  theme_bw()
+
+# Combine all the ROC curves
+library(patchwork)
+
+roc_curves <- gbm_auc_curve +
+  treebag_auc_curve +
+  ada_auc_curve +
+  xgboost_auc_curve +
+  plot_annotation(title = "ROC Curves", tag_levels = "A")
+roc_curves
+#======================================================================================================================#
+# Predict the blenderData and testData to get the probabilities
+#======================================================================================================================#
+blenderData <- blenderData %>%
+  mutate(
+	# get blenderData probabilities
+	gbm_Prob_No = predict(object = model_gbm,
+						  newdata = blenderData %>% select(all_of(predictors)),
+						  type = "prob")[, 1],
+	gbm_Prob_Yes = predict(object = model_gbm,
+						   newdata = blenderData %>% select(all_of(predictors)),
+						   type = "prob")[, 2],
+	treebag_Prob_No = predict(object = model_treebag,
+							  newdata = blenderData %>% select(all_of(predictors)),
+							  type = "prob")[, 1],
+	treebag_Prob_Yes = predict(object = model_treebag,
+							   newdata = blenderData %>% select(all_of(predictors)),
+							   type = "prob")[, 2],
+	nbayes_Prob_No = predict(object = model_ada,
+							 newdata = blenderData %>% select(all_of(predictors)),
+							 type = "prob")[, 1],
+	nbayes_Prob_Yes = predict(object = model_ada,
+							  newdata = blenderData %>% select(all_of(predictors)),
+							  type = "prob")[, 2],
+	# logitboost_Prob_No = predict(object = model_xgboost,
+	# 							 newdata = blenderData %>% select(all_of(predictors)),
+	# 							 type = "prob")[, 1],
+	# logitboost_Prob_Yes = predict(object = model_xgboost,
+	# 							  newdata = blenderData %>% select(all_of(predictors)),
+	# 							  type = "prob")[, 2],
+  )
+
+testData <- testData %>%
+  mutate(
+	# get blenderData probabilities
+	gbm_Prob_No = predict(object = model_gbm,
+						  newdata = testData %>% select(all_of(predictors)),
+						  type = "prob")[, 1],
+	gbm_Prob_Yes = predict(object = model_gbm,
+						   newdata = testData %>% select(all_of(predictors)),
+						   type = "prob")[, 2],
+	treebag_Prob_No = predict(object = model_treebag,
+							  newdata = testData %>% select(all_of(predictors)),
+							  type = "prob")[, 1],
+	treebag_Prob_Yes = predict(object = model_treebag,
+							   newdata = testData %>% select(all_of(predictors)),
+							   type = "prob")[, 2],
+	nbayes_Prob_No = predict(object = model_ada,
+							 newdata = testData %>% select(all_of(predictors)),
+							 type = "prob")[, 1],
+	nbayes_Prob_Yes = predict(object = model_ada,
+							  newdata = testData %>% select(all_of(predictors)),
+							  type = "prob")[, 2],
+	# logitboost_Prob_No = predict(object = model_xgboost,
+	# 							 newdata = testData %>% select(all_of(predictors)),
+	# 							 type = "prob")[, 1],
+	# logitboost_Prob_Yes = predict(object = model_xgboost,
+	# 							  newdata = testData %>% select(all_of(predictors)),
+	# 							  type = "prob")[, 2],
+  )
+# # Combine the probabilities from the blenderData and testData
+# blenderData$all_model_Prob <- rowMeans(x = blenderData[, c("gbm_Prob", "treebag_Prob", "nbayes_Prob",
+# "logitboost_Prob")])
+# testData$all_model_Prob <- rowMeans(x = testData[, c("gbm_Prob", "treebag_Prob", "nbayes_Prob", "logitboost_Prob")])
+#======================================================================================================================#
+# Train the blenderData, including the ensemble model probabilities.
+#======================================================================================================================#
+# Get the blenderData predictors
+blend_predictors <- blenderData %>%
+  select(-labelName) %>%
+  select(tenure_cat_Long_Tenure:nbayes_Prob_Yes) %>%
+  names()
+
+# Training the final model
+start_time <- Sys.time()
+final_blender_model <- train(
+  x = blenderData %>% select(all_of(blend_predictors)),
+  y = blenderData %>% pull(labelName),
+  method = "gbm",
+  preProcess = c("center", "scale"),
+  metric = "ROC",
+  # tuneGrid = gbmTuned,
+  trControl = my_ctrl,
+  verbose = FALSE
+)
+end_time <- Sys.time()
+end_time - start_time
+final_blender_model
+ggplot(final_blender_model) + theme(legend.position = "top")
+#======================================================================================================================#
+# Use the final model to predict the testData using the GBM model.
+#======================================================================================================================#
+# Predict the testData
+preds <- predict(object = model_gbm, newdata = testData %>% select(all_of(predictors)))
+
+preds <- predict(object = final_blender_model, newdata = testData %>% select(all_of(blend_predictors)))
+actual <- testData %>% pull(labelName)
+
+# Confusion Matrix
+confusionMatrix(actual, preds, positive = "Yes")
+
+# AUC Curve
+auc <- roc(response = actual,
+		   predictor = as.numeric(preds),
+		   levels = rev(levels(as.factor(actual))))
+auc
+
+# Plot the ROC curve
+ggroc(auc, colour = "blue", linetype = 1, size = 2) +
+  ggtitle(label = "ROC Curve") +
+  labs(x = "Specificity", y = "Sensitivity") +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+  theme_bw()
